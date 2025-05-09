@@ -1,4 +1,4 @@
- # Enhanced AI Movie Matchmaking Streamlit App
+#  AI Movie Matchmaking Streamlit App
 
 import streamlit as st
 import pandas as pd
@@ -43,6 +43,7 @@ def load_movies():
             "Overview": ["Sample overview 1", "Sample overview 2"],
             "IMDB_Rating": [7.5, 8.0],
             "Poster_Link": [POSTER_PLACEHOLDER, POSTER_PLACEHOLDER],
+            "Runtime": [120, 90],
             "combined_features": ["Action Director A Sample overview 1", "Comedy Director B Sample overview 2"]
         })
 
@@ -122,18 +123,22 @@ def get_movie_card(movie):
     return st
 
 def recommend_movies(user_data, df, matrix, tfidf, n=5):
-    """Generate personalized recommendations"""
-    if not user_data["watched"]:
-        return df.sample(n)
-    
-    watched_indices = df[df["Series_Title"].isin(user_data["watched"])].index
-    if len(watched_indices) == 0:
-        return df.sample(n)
-    
-    watched_vec = matrix[watched_indices].mean(axis=0)
-    sim_scores = cosine_similarity(watched_vec, matrix).flatten()
-    top_indices = sim_scores.argsort()[-n-1:-1][::-1]
-    return df.iloc[top_indices]
+    """Generate personalized recommendations with error handling"""
+    try:
+        if not user_data["watched"]:
+            return df.sample(min(n, len(df)))
+        
+        watched_indices = df[df["Series_Title"].isin(user_data["watched"])].index
+        if len(watched_indices) == 0:
+            return df.sample(min(n, len(df)))
+        
+        watched_vec = matrix[watched_indices].mean(axis=0)
+        sim_scores = cosine_similarity(watched_vec, matrix).flatten()
+        top_indices = sim_scores.argsort()[-n-1:-1][::-1]
+        return df.iloc[top_indices]
+    except Exception as e:
+        st.error(f"Error generating recommendations: {str(e)}")
+        return df.sample(min(n, len(df)))
 
 # Initialize session state
 if "user" not in st.session_state:
@@ -142,6 +147,8 @@ if "page" not in st.session_state:
     st.session_state.page = "Login"
 if "search_query" not in st.session_state:
     st.session_state.search_query = ""
+if "current_movie" not in st.session_state:
+    st.session_state.current_movie = None
 
 # Load data
 df = load_movies()
@@ -212,23 +219,26 @@ def home_page():
             with cols[idx % 4]:
                 get_movie_card(movie)
                 if st.button(f"Continue {title[:15]}...", key=f"cont_{idx}"):
-                    # Implement watch functionality
                     st.session_state.current_movie = movie.to_dict()
                     st.session_state.page = "Watch"
+                    st.rerun()
     
     # Recommendations
     st.subheader("Recommended For You")
     recs = recommend_movies(user_data, df, matrix, tfidf, 4)
-    cols = st.columns(4)
-    for idx, (_, movie) in enumerate(recs.iterrows()):
-        with cols[idx % 4]:
-            get_movie_card(movie)
-            if st.button(f"Watch {movie['Series_Title'][:15]}...", key=f"rec_{idx}"):
-                users[st.session_state.user]["continue_watching"].append(movie["Series_Title"])
-                save_users(users)
-                st.session_state.current_movie = movie.to_dict()
-                st.session_state.page = "Watch"
-                st.rerun()
+    if len(recs) > 0:
+        cols = st.columns(min(4, len(recs)))
+        for idx, (_, movie) in enumerate(recs.iterrows()):
+            with cols[idx % 4]:
+                get_movie_card(movie)
+                if st.button(f"Watch {movie['Series_Title'][:15]}...", key=f"rec_{idx}"):
+                    users[st.session_state.user]["continue_watching"].append(movie["Series_Title"])
+                    save_users(users)
+                    st.session_state.current_movie = movie.to_dict()
+                    st.session_state.page = "Watch"
+                    st.rerun()
+    else:
+        st.warning("No recommendations available. Watch some movies first!")
 
 def discover_page():
     st.title("🔍 Discover Movies")
@@ -264,7 +274,7 @@ def discover_page():
             st.rerun()
 
 def watch_page():
-    if "current_movie" not in st.session_state:
+    if st.session_state.current_movie is None:
         st.warning("No movie selected")
         st.session_state.page = "Home"
         st.rerun()
@@ -382,7 +392,7 @@ def profile_page():
     col1, col2 = st.columns([1, 3])
     with col1:
         st.metric("Level", user_data["level"])
-        st.progress(user_data["xp"] / XP_LEVEL_THRESHOLD)
+        st.progress(min(user_data["xp"] / XP_LEVEL_THRESHOLD, 1.0))
         st.caption(f"{user_data['xp']}/{XP_LEVEL_THRESHOLD} XP to next level")
         st.write(f"Member since: {user_data.get('join_date', 'Unknown')}")
     with col2:
